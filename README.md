@@ -1,7 +1,7 @@
 --========================================================
 -- BLACKHAT HUB | THANOS SIMULATOR (PAGED UI + ADMIN BADGE)
 -- Author: blackhat
--- Part 1 (Updated Fly + Mask Asset ID)
+-- Part 1 (Glowing Crystal Lock & Hit Fix)
 --========================================================
 
 local Players = game:GetService("Players")
@@ -29,7 +29,7 @@ local Config = {
 	Noclip = false,
 	PlayerESP = false,
 	CrystalAssist = false,
-	CrystalAutoTP = false,
+	CrystalAutoTP = true,
 	CrystalHitboxExpand = true,
 	CrystalAutoClick = true,
 	World5Assist = false,
@@ -41,6 +41,7 @@ local State = {
 	BodyVelocity = nil,
 	ESPObjects = {},
 	CrystalIndex = 0,
+	LockedTarget = nil,
 	ExpandedParts = {},
 	LastClick = 0
 }
@@ -59,16 +60,16 @@ end
 
 local function SafeClick()
 	local now = os.clock()
-	if now - State.LastClick < 0.08 then return end
+	if now - State.LastClick < 0.06 then return end
 	State.LastClick = now
 	pcall(function()
 		VirtualUser:CaptureController()
-		VirtualUser:ClickButton1(Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2))
+		VirtualUser:ClickButton1(Vector2.new(Camera.ViewportSize.X * 0.65, Camera.ViewportSize.Y * 0.5))
 	end)
 end
 
 --========================================================
--- FLY SİSTEMİ (AŞAĞI / YUKARI DÜZELTİLMİŞ)
+-- FLY SİSTEMİ
 --========================================================
 
 local function StopFly()
@@ -262,13 +263,28 @@ local function UpdatePlayerESP()
 end
 
 --========================================================
--- PARLAYAN TAŞ / KRİSTAL / HEDEF VURMA SİSTEMİ
+-- PARLAYAN TAŞ / KRİSTAL KİLİTLEME & VURMA SİSTEMİ
 --========================================================
 
 local CrystalKeywords = {
 	"crystal", "stone", "gem", "shard", "core", "orb", "node",
-	"rock", "relic", "frost", "ice", "heart", "ymir", "eye", "brain", "statue"
+	"rock", "relic", "frost", "ice", "heart", "ymir", "eye", "brain",
+	"statue", "glow", "glowing", "boss", "target", "hp", "health", "break"
 }
+
+local function HasHealthOrDamageGui(obj)
+	local found = false
+	for _, desc in ipairs(obj:GetDescendants()) do
+		if desc:IsA("TextLabel") or desc:IsA("TextButton") then
+			local txt = string.lower(desc.Text or "")
+			if tonumber(txt) or string.find(txt, "hp", 1, true) or string.find(txt, "/", 1, true) then
+				found = true
+				break
+			end
+		end
+	end
+	return found
+end
 
 local function IsPotentialCrystalTarget(obj)
 	if not obj or not obj.Parent then return false end
@@ -279,6 +295,10 @@ local function IsPotentialCrystalTarget(obj)
 	end
 
 	if obj:IsA("BasePart") then
+		if obj.Size.Magnitude > 220 or obj.Size.Magnitude < 1.2 then
+			return false
+		end
+
 		local matchesName = false
 		for _, kw in ipairs(CrystalKeywords) do
 			if string.find(lower, kw, 1, true) then
@@ -287,13 +307,20 @@ local function IsPotentialCrystalTarget(obj)
 			end
 		end
 
-		local isGlowingOrTranslucent = (obj.Material == Enum.Material.Neon or obj.Material == Enum.Material.Glass or obj.Material == Enum.Material.ForceField)
-		local hasClickOrPrompt = obj:FindFirstChildOfClass("ClickDetector") or obj:FindFirstChildOfClass("ProximityPrompt")
+		local isGlowingOrTranslucent = (
+			obj.Material == Enum.Material.Neon or
+			obj.Material == Enum.Material.Glass or
+			obj.Material == Enum.Material.ForceField
+		)
+		local hasClickOrPrompt = (
+			obj:FindFirstChildOfClass("ClickDetector") or
+			obj:FindFirstChildOfClass("ProximityPrompt") or
+			obj:FindFirstChildOfClass("TouchTransmitter")
+		)
+		local hasGui = HasHealthOrDamageGui(obj)
 
-		if matchesName or (isGlowingOrTranslucent and obj.Size.Magnitude >= 2.5) or hasClickOrPrompt then
-			if obj.Size.Magnitude < 220 then
-				return true
-			end
+		if matchesName or isGlowingOrTranslucent or hasClickOrPrompt or hasGui then
+			return true
 		end
 	elseif obj:IsA("Model") then
 		for _, kw in ipairs(CrystalKeywords) do
@@ -301,15 +328,32 @@ local function IsPotentialCrystalTarget(obj)
 				return true
 			end
 		end
+		if HasHealthOrDamageGui(obj) then
+			return true
+		end
 	end
 
 	return false
 end
 
 local function GetTargetPart(obj)
+	if not obj then return nil end
 	if obj:IsA("BasePart") then return obj end
 	if obj:IsA("Model") then
-		return obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true)
+		local bestPart = obj.PrimaryPart
+		local bestScore = -1
+		for _, p in ipairs(obj:GetDescendants()) do
+			if p:IsA("BasePart") then
+				local score = p.Size.Magnitude
+				if p.Material == Enum.Material.Neon then score += 25 end
+				if p:FindFirstChildOfClass("TouchTransmitter") then score += 15 end
+				if score > bestScore then
+					bestScore = score
+					bestPart = p
+				end
+			end
+		end
+		return bestPart or obj:FindFirstChildWhichIsA("BasePart", true)
 	end
 	return nil
 end
@@ -328,40 +372,60 @@ end
 
 local function ExpandPartHitbox(part)
 	if not part or not part:IsA("BasePart") or State.ExpandedParts[part] then return end
-	if part.Size.Magnitude > 50 then return end
+	if part.Size.Magnitude > 65 then return end
 	pcall(function()
 		State.ExpandedParts[part] = {
 			Size = part.Size,
 			Transparency = part.Transparency
 		}
 		part.Size = Vector3.new(
-			math.clamp(part.Size.X * 2.5, 8, 26),
-			math.clamp(part.Size.Y * 2.5, 8, 26),
-			math.clamp(part.Size.Z * 2.5, 8, 26)
+			math.clamp(part.Size.X * 2.8, 10, 30),
+			math.clamp(part.Size.Y * 2.8, 10, 30),
+			math.clamp(part.Size.Z * 2.8, 10, 30)
 		)
 		part.Transparency = math.min(part.Transparency, 0.45)
 	end)
 end
 
 local function FindCrystalTargets()
+	local _, hrp = GetChar()
+	local origin = hrp and hrp.Position or Camera.CFrame.Position
 	local list = {}
 	local seen = {}
 
 	for _, desc in ipairs(Workspace:GetDescendants()) do
 		if not seen[desc] and IsPotentialCrystalTarget(desc) then
 			local part = GetTargetPart(desc)
-			if part and not seen[part] then
+			if part and part.Parent and not seen[part] then
 				seen[desc] = true
 				seen[part] = true
-				table.insert(list, {Object = desc, Part = part})
+				local dist = (part.Position - origin).Magnitude
+				if dist < 260 then
+					table.insert(list, {Object = desc, Part = part, Dist = dist})
+				end
 			end
 		end
 	end
 
+	table.sort(list, function(a, b)
+		return a.Dist < b.Dist
+	end)
+
 	return list
 end
 
-local function TriggerTargetInteractions(obj, part)
+local function FireTouchWithHRP(part, hrp)
+	if not part or not hrp then return end
+	if firetouchinterest then
+		pcall(function()
+			firetouchinterest(hrp, part, 0)
+			task.wait(0.02)
+			firetouchinterest(hrp, part, 1)
+		end)
+	end
+end
+
+local function TriggerTargetInteractions(obj, part, hrp)
 	local cd = (obj and obj:FindFirstChildOfClass("ClickDetector")) or (part and part:FindFirstChildOfClass("ClickDetector"))
 	if cd and fireclickdetector then
 		pcall(function() fireclickdetector(cd) end)
@@ -372,11 +436,21 @@ local function TriggerTargetInteractions(obj, part)
 		pcall(function() fireproximityprompt(pp) end)
 	end
 
+	FireTouchWithHRP(part, hrp)
+
 	local char = LocalPlayer.Character
 	if char then
-		local tool = char:FindFirstChildOfClass("Tool")
-		if tool then
-			pcall(function() tool:Activate() end)
+		for _, item in ipairs(char:GetChildren()) do
+			if item:IsA("Tool") then
+				pcall(function() item:Activate() end)
+			end
+		end
+		local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+		if backpack and not char:FindFirstChildOfClass("Tool") then
+			local firstTool = backpack:FindFirstChildOfClass("Tool")
+			if firstTool then
+				pcall(function() firstTool.Parent = char end)
+			end
 		end
 	end
 
@@ -387,21 +461,37 @@ end
 
 local function StepCrystalAssist()
 	if not Config.CrystalAssist then
+		State.LockedTarget = nil
 		RestoreExpandedParts()
 		return
 	end
 
 	local targets = FindCrystalTargets()
-	if #targets == 0 then return end
-
-	State.CrystalIndex += 1
-	if State.CrystalIndex > #targets then
-		State.CrystalIndex = 1
+	if #targets == 0 then
+		State.LockedTarget = nil
+		return
 	end
 
-	local current = targets[State.CrystalIndex]
-	local part = current and current.Part
-	if not part or not part.Parent then return end
+	local chosen = nil
+	if State.LockedTarget and State.LockedTarget.Part and State.LockedTarget.Part.Parent then
+		for _, item in ipairs(targets) do
+			if item.Part == State.LockedTarget.Part and item.Dist < 140 then
+				chosen = item
+				break
+			end
+		end
+	end
+
+	if not chosen then
+		chosen = targets[1]
+		State.LockedTarget = chosen
+	end
+
+	local part = chosen and chosen.Part
+	if not part or not part.Parent then
+		State.LockedTarget = nil
+		return
+	end
 
 	if Config.CrystalHitboxExpand then
 		ExpandPartHitbox(part)
@@ -410,18 +500,19 @@ local function StepCrystalAssist()
 	local char, hrp = GetChar()
 	if char and hrp then
 		if Config.CrystalAutoTP then
-			local offsetPos = part.Position - (part.CFrame.LookVector * 6) + Vector3.new(0, 1.5, 0)
+			local frontPos = part.Position + (part.CFrame.LookVector * 4.5) + Vector3.new(0, 1.0, 0)
 			pcall(function()
-				char:PivotTo(CFrame.new(offsetPos, part.Position))
+				char:PivotTo(CFrame.new(frontPos, part.Position))
 				hrp.AssemblyLinearVelocity = Vector3.zero
 			end)
 		end
+
 		pcall(function()
 			Camera.CFrame = CFrame.new(Camera.CFrame.Position, part.Position)
 		end)
 	end
 
-	TriggerTargetInteractions(current.Object, part)
+	TriggerTargetInteractions(chosen.Object, part, hrp)
 end
 
 --========================================================
@@ -478,7 +569,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-	while task.wait(0.18) do
+	while task.wait(0.12) do
 		if Config.CrystalAssist then
 			pcall(StepCrystalAssist)
 		end
@@ -501,13 +592,14 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
 	StopFly()
+	State.LockedTarget = nil
 	State.ExpandedParts = {}
 end)
 
 --========================================================
 -- BLACKHAT HUB | THANOS SIMULATOR (PAGED UI + ADMIN BADGE)
 -- Author: blackhat
--- Part 2 (Updated Mask Asset ID)
+-- Part 2 (Glowing Crystal Lock & Hit Fix)
 --========================================================
 
 local old = PlayerGui:FindFirstChild("BLACKHAT_HUB")
@@ -904,7 +996,7 @@ local NoclipBtn = AddPageButton(MainPage, "Noclip: OFF")
 --========================================================
 
 local CrystalAssistBtn = AddPageButton(SnowPage, "Crystal / Stone Hit Assist: OFF")
-local CrystalTPBtn = AddPageButton(SnowPage, "Crystal Auto TP: OFF")
+local CrystalTPBtn = AddPageButton(SnowPage, "Crystal Auto TP: ON")
 local CrystalHitboxBtn = AddPageButton(SnowPage, "Crystal Hitbox Expand: ON")
 local CrystalClickBtn = AddPageButton(SnowPage, "Crystal Auto Click/Hit: ON")
 local World5Btn = AddPageButton(SnowPage, "Snow / World 5 Auto Assist: OFF")
@@ -949,7 +1041,10 @@ end)
 CrystalAssistBtn.MouseButton1Click:Connect(function()
 	Config.CrystalAssist = not Config.CrystalAssist
 	SetToggle(CrystalAssistBtn, "Crystal / Stone Hit Assist", Config.CrystalAssist)
-	if not Config.CrystalAssist then RestoreExpandedParts() end
+	if not Config.CrystalAssist then
+		State.LockedTarget = nil
+		RestoreExpandedParts()
+	end
 end)
 
 CrystalTPBtn.MouseButton1Click:Connect(function()
@@ -978,4 +1073,4 @@ AntiAFKBtn.MouseButton1Click:Connect(function()
 	SetToggle(AntiAFKBtn, "Anti AFK", Config.AntiAFK)
 end)
 
-print("[Blackhat Hub] Paged UI + Custom Mask Asset Loaded!")
+print("[Blackhat Hub] Paged UI + Glowing Crystal Lock Loaded!")
