@@ -1,7 +1,7 @@
 --========================================================
 -- BLACKHAT HUB | THANOS SIMULATOR (PAGED UI + ADMIN BADGE)
 -- Author: blackhat
--- Part 1 (Updated Fly)
+-- Part 1 (Updated Fly + Mask Asset ID)
 --========================================================
 
 local Players = game:GetService("Players")
@@ -14,9 +14,8 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = Workspace.CurrentCamera
 
--- Görsel yüklendiğinde buradaki sayıyı kendi Asset ID'nle değiştirebilirsin
-local ICON_ID = "rbxthumb://type=Asset&id=103525855196551&w=150&h=150"
-local ADMIN_ICON_ID = "" -- Henüz ID yok; yükleyince örn: "rbxassetid://1234567890" yapabilirsin
+local ICON_ID = "rbxthumb://type=Asset&id=139474306115384&w=150&h=150"
+local ADMIN_ICON_ID = "rbxassetid://139474306115384"
 
 --========================================================
 -- AYARLAR & DURUMLAR
@@ -503,10 +502,12 @@ end)
 LocalPlayer.CharacterAdded:Connect(function()
 	StopFly()
 	State.ExpandedParts = {}
-end)--========================================================
+end)
+
+--========================================================
 -- BLACKHAT HUB | THANOS SIMULATOR (PAGED UI + ADMIN BADGE)
 -- Author: blackhat
--- Part 2
+-- Part 2 (Updated Mask Asset ID)
 --========================================================
 
 local old = PlayerGui:FindFirstChild("BLACKHAT_HUB")
@@ -875,7 +876,7 @@ local AdminSubText = Instance.new("TextLabel")
 AdminSubText.Size = UDim2.new(1, -48, 0, 14)
 AdminSubText.Position = UDim2.fromOffset(44, 23)
 AdminSubText.BackgroundTransparency = 1
-AdminSubText.Text = (ADMIN_ICON_ID ~= "" and "Custom Mask Asset Active" or "ID Bekleniyor • Blackhat Mod Aktif")
+AdminSubText.Text = "Custom Mask Asset Active"
 AdminSubText.TextColor3 = Color3.fromRGB(175, 182, 200)
 AdminSubText.TextSize = 9
 AdminSubText.Font = Enum.Font.GothamMedium
@@ -977,6 +978,4 @@ AntiAFKBtn.MouseButton1Click:Connect(function()
 	SetToggle(AntiAFKBtn, "Anti AFK", Config.AntiAFK)
 end)
 
-print("[Blackhat Hub] Paged UI + Admin Badge Loaded!")
-
-
+print("[Blackhat Hub] Paged UI + Custom Mask Asset Loaded!")
