@@ -1,0 +1,740 @@
+--========================================================
+-- BLACKHAT HUB | FIGHT CLUB (LEFT SIDEBAR SCROLL UI)
+-- Author: blackhat
+-- Part 1 (Fight Club Combat, Movement & Visuals)
+--========================================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+local Camera = Workspace.CurrentCamera
+
+local ICON_ID = "rbxthumb://type=Asset&id=139474306115384&w=150&h=150"
+local ADMIN_ICON_ID = "rbxassetid://139474306115384"
+
+--========================================================
+-- FIGHT CLUB AYARLARI
+--========================================================
+
+local Config = {
+	AutoFight = false,
+	AutoChase = false,
+	AutoBlock = false,
+	SpeedHack = false,
+	WalkSpeed = 42,
+	Noclip = false,
+	Fly = false,
+	FlySpeed = 65,
+	PlayerESP = false,
+	AntiAFK = true
+}
+
+local State = {
+	BodyGyro = nil,
+	BodyVelocity = nil,
+	ESPObjects = {},
+	LastHit = 0,
+	LastBlock = 0
+}
+
+--========================================================
+-- YARDIMCI FONKSİYONLAR
+--========================================================
+
+local function GetChar()
+	local char = LocalPlayer.Character
+	if not char then return nil, nil, nil end
+	local hrp = char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("Torso")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	return char, hrp, hum
+end
+
+local function GetNearestEnemy(maxDist)
+	local char, hrp = GetChar()
+	if not char or not hrp then return nil, nil, nil, math.huge end
+
+	local bestPlr, bestChar, bestHRP = nil, nil, nil
+	local bestDist = maxDist or 120
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			local eChar = plr.Character
+			local eHRP = eChar:FindFirstChild("HumanoidRootPart")
+			local eHum = eChar:FindFirstChildOfClass("Humanoid")
+			if eHRP and eHum and eHum.Health > 0 then
+				local d = (eHRP.Position - hrp.Position).Magnitude
+				if d < bestDist then
+					bestDist = d
+					bestPlr = plr
+					bestChar = eChar
+					bestHRP = eHRP
+				end
+			end
+		end
+	end
+
+	return bestPlr, bestChar, bestHRP, bestDist
+end
+
+local function TriggerGuiAction(keywords)
+	for _, gui in ipairs(PlayerGui:GetDescendants()) do
+		if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+			if gui.Visible and gui.AbsoluteSize.Magnitude > 5 then
+				local txt = string.lower(gui.Name .. " " .. (gui:IsA("TextButton") and gui.Text or ""))
+				for _, kw in ipairs(keywords) do
+					if string.find(txt, kw, 1, true) then
+						pcall(function()
+							if firesignal then
+								firesignal(gui.MouseButton1Click)
+								firesignal(gui.Activated)
+							end
+						end)
+						return true
+					end
+				end
+			end
+		end
+	end
+	return false
+end
+
+local function DoAttack()
+	local now = os.clock()
+	if now - State.LastHit < 0.14 then return end
+	State.LastHit = now
+
+	local char = LocalPlayer.Character
+	if char then
+		for _, item in ipairs(char:GetChildren()) do
+			if item:IsA("Tool") then
+				pcall(function() item:Activate() end)
+			end
+		end
+	end
+
+	TriggerGuiAction({"punch", "kick", "high", "low", "hit", "attack", "fist"})
+
+	pcall(function()
+		VirtualUser:CaptureController()
+		VirtualUser:ClickButton1(Vector2.new(Camera.ViewportSize.X * 0.72, Camera.ViewportSize.Y * 0.55))
+	end)
+end
+
+local function DoBlock()
+	local now = os.clock()
+	if now - State.LastBlock < 0.25 then return end
+	State.LastBlock = now
+	TriggerGuiAction({"block", "guard", "parry", "defend"})
+end
+
+--========================================================
+-- FLY SİSTEMİ
+--========================================================
+
+local function StopFly()
+	if State.BodyGyro then pcall(function() State.BodyGyro:Destroy() end) State.BodyGyro = nil end
+	if State.BodyVelocity then pcall(function() State.BodyVelocity:Destroy() end) State.BodyVelocity = nil end
+	local _, _, hum = GetChar()
+	if hum then pcall(function() hum.PlatformStand = false end) end
+end
+
+local function StartFly()
+	StopFly()
+	local _, hrp, hum = GetChar()
+	if not hrp then return end
+	if hum then pcall(function() hum.PlatformStand = true end) end
+
+	local bg = Instance.new("BodyGyro")
+	bg.Name = "BlackhatFCGyro"
+	bg.P = 9e4
+	bg.maxTorque = Vector3.new(9e9, 9e9, 9e9)
+	bg.cframe = hrp.CFrame
+	bg.Parent = hrp
+
+	local bv = Instance.new("BodyVelocity")
+	bv.Name = "BlackhatFCVel"
+	bv.velocity = Vector3.zero
+	bv.maxForce = Vector3.new(9e9, 9e9, 9e9)
+	bv.Parent = hrp
+
+	State.BodyGyro = bg
+	State.BodyVelocity = bv
+end
+
+--========================================================
+-- MOVEMENT LOOPS
+--========================================================
+
+RunService.Stepped:Connect(function()
+	local char, _, hum = GetChar()
+	if not char then return end
+
+	if Config.Noclip then
+		for _, v in ipairs(char:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+			end
+		end
+	end
+
+	if Config.SpeedHack and hum and hum.Health > 0 then
+		if hum.WalkSpeed ~= Config.WalkSpeed then
+			hum.WalkSpeed = Config.WalkSpeed
+		end
+	end
+end)
+
+RunService.Heartbeat:Connect(function()
+	local char, hrp, hum = GetChar()
+	if not char or not hrp then return end
+
+	if Config.Fly then
+		if not State.BodyGyro or not State.BodyVelocity or State.BodyGyro.Parent ~= hrp then
+			StartFly()
+		end
+		if State.BodyGyro and State.BodyVelocity then
+			local camCF = Camera.CFrame
+			local flyDir = Vector3.zero
+
+			if UserInputService:IsKeyDown(Enum.KeyCode.W) then flyDir += camCF.LookVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.S) then flyDir -= camCF.LookVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.D) then flyDir += camCF.RightVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.A) then flyDir -= camCF.RightVector end
+			if UserInputService:IsKeyDown(Enum.KeyCode.Space) then flyDir += Vector3.new(0, 1, 0) end
+			if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then flyDir -= Vector3.new(0, 1, 0) end
+
+			if flyDir.Magnitude == 0 and hum and hum.MoveDirection.Magnitude > 0 then
+				local flatLook = Vector3.new(camCF.LookVector.X, 0, camCF.LookVector.Z)
+				if flatLook.Magnitude > 0 then
+					flatLook = flatLook.Unit
+					local rightVec = flatLook:Cross(Vector3.new(0, 1, 0))
+					local forwardAmt = hum.MoveDirection:Dot(flatLook)
+					local rightAmt = hum.MoveDirection:Dot(rightVec)
+					flyDir = (flatLook * forwardAmt) + (rightVec * rightAmt) + Vector3.new(0, camCF.LookVector.Y * forwardAmt, 0)
+				end
+			end
+
+			if hum and hum.Jump then
+				flyDir += Vector3.new(0, 1, 0)
+			end
+
+			if flyDir.Magnitude > 0 then
+				flyDir = flyDir.Unit
+			end
+
+			State.BodyGyro.cframe = CFrame.new(hrp.Position, hrp.Position + camCF.LookVector)
+			State.BodyVelocity.velocity = flyDir * Config.FlySpeed
+		end
+	elseif State.BodyGyro or State.BodyVelocity then
+		StopFly()
+	end
+end)
+
+--========================================================
+-- PLAYER ESP
+--========================================================
+
+local function ClearESP()
+	for plr, data in pairs(State.ESPObjects) do
+		if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+		if data.Billboard then pcall(function() data.Billboard:Destroy() end) end
+		State.ESPObjects[plr] = nil
+	end
+end
+
+local function UpdateESP()
+	if not Config.PlayerESP then
+		ClearESP()
+		return
+	end
+
+	local _, myHRP = GetChar()
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			local char = plr.Character
+			local hrp = char:FindFirstChild("HumanoidRootPart")
+			local hum = char:FindFirstChildOfClass("Humanoid")
+
+			if hrp and hum and hum.Health > 0 then
+				local entry = State.ESPObjects[plr]
+				if not entry then
+					entry = {}
+					State.ESPObjects[plr] = entry
+				end
+
+				if not entry.Highlight or entry.Highlight.Parent ~= char then
+					if entry.Highlight then pcall(function() entry.Highlight:Destroy() end) end
+					local hl = Instance.new("Highlight")
+					hl.Name = "BlackhatFCESP"
+					hl.FillColor = Color3.fromRGB(255, 70, 90)
+					hl.OutlineColor = Color3.fromRGB(255, 255, 255)
+					hl.FillTransparency = 0.5
+					hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+					hl.Adornee = char
+					hl.Parent = char
+					entry.Highlight = hl
+				end
+
+				if not entry.Billboard or entry.Billboard.Parent ~= hrp then
+					if entry.Billboard then pcall(function() entry.Billboard:Destroy() end) end
+					local bb = Instance.new("BillboardGui")
+					bb.Name = "BlackhatFCTag"
+					bb.Adornee = hrp
+					bb.Size = UDim2.new(0, 175, 0, 38)
+					bb.StudsOffset = Vector3.new(0, 3.2, 0)
+					bb.AlwaysOnTop = true
+
+					local lbl = Instance.new("TextLabel")
+					lbl.Name = "TagLabel"
+					lbl.Size = UDim2.new(1, 0, 1, 0)
+					lbl.BackgroundTransparency = 1
+					lbl.TextColor3 = Color3.new(1, 1, 1)
+					lbl.TextStrokeTransparency = 0
+					lbl.TextSize = 11
+					lbl.Font = Enum.Font.GothamBold
+					lbl.RichText = true
+					lbl.Parent = bb
+					bb.Parent = hrp
+					entry.Billboard = bb
+				end
+
+				local lbl = entry.Billboard:FindFirstChild("TagLabel")
+				if lbl then
+					local dist = myHRP and math.floor((hrp.Position - myHRP.Position).Magnitude) or 0
+					lbl.Text = string.format("%s <font color=\"#FF6B81\">[%dm]</font>\n<font color=\"#7BED9F\">HP: %d</font>", plr.DisplayName, dist, math.floor(hum.Health))
+				end
+			end
+		end
+	end
+
+	for plr, data in pairs(State.ESPObjects) do
+		if not plr.Parent or not plr.Character or not plr.Character:FindFirstChild("HumanoidRootPart") then
+			if data.Highlight then pcall(function() data.Highlight:Destroy() end) end
+			if data.Billboard then pcall(function() data.Billboard:Destroy() end) end
+			State.ESPObjects[plr] = nil
+		end
+	end
+end
+
+--========================================================
+-- FIGHT CLUB COMBAT LOOP
+--========================================================
+
+task.spawn(function()
+	while task.wait(0.10) do
+		local char, hrp = GetChar()
+		if char and hrp and (Config.AutoFight or Config.AutoChase or Config.AutoBlock) then
+			local _, _, eHRP, dist = GetNearestEnemy(Config.AutoChase and 150 or 16)
+			if eHRP then
+				if Config.AutoChase and dist > 3.2 then
+					local behindPos = eHRP.Position - (eHRP.CFrame.LookVector * 3.4)
+					pcall(function()
+						char:PivotTo(CFrame.new(behindPos, eHRP.Position))
+						hrp.AssemblyLinearVelocity = Vector3.zero
+					end)
+				end
+
+				if Config.AutoBlock and dist < 10 then
+					DoBlock()
+				end
+
+				if Config.AutoFight and dist < 11 then
+					pcall(function()
+						Camera.CFrame = CFrame.new(Camera.CFrame.Position, eHRP.Position + Vector3.new(0, 1, 0))
+					end)
+					DoAttack()
+				end
+			end
+		end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(0.30) do
+		if Config.PlayerESP then
+			pcall(UpdateESP)
+		elseif next(State.ESPObjects) ~= nil then
+			pcall(ClearESP)
+		end
+	end
+end)
+
+task.spawn(function()
+	while task.wait(15) do
+		if Config.AntiAFK then
+			pcall(function()
+				VirtualUser:CaptureController()
+				VirtualUser:ClickButton2(Vector2.new())
+			end)
+		end
+	end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+	StopFly()
+end)
+--========================================================
+-- BLACKHAT HUB | FIGHT CLUB (LEFT SIDEBAR SCROLL UI)
+-- Author: blackhat
+-- Part 2 (Large Scrollable Menu, Tabs on Left)
+--========================================================
+
+local old = PlayerGui:FindFirstChild("BLACKHAT_FC_UI")
+if old then old:Destroy() end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "BLACKHAT_FC_UI"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.IgnoreGuiInset = true
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PlayerGui
+
+-- Büyük Ana Pencere
+local MainFrame = Instance.new("Frame")
+MainFrame.Name = "MainFrame"
+MainFrame.Size = UDim2.fromOffset(470, 340)
+MainFrame.Position = UDim2.new(0.5, -235, 0.5, -170)
+MainFrame.BackgroundColor3 = Color3.fromRGB(17, 19, 25)
+MainFrame.BorderSizePixel = 0
+MainFrame.Active = true
+MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 14)
+
+local MainStroke = Instance.new("UIStroke")
+MainStroke.Color = Color3.fromRGB(255, 65, 95)
+MainStroke.Thickness = 1.6
+MainStroke.Transparency = 0.25
+MainStroke.Parent = MainFrame
+
+-- Üst Bar
+local TopBar = Instance.new("Frame")
+TopBar.Size = UDim2.new(1, 0, 0, 52)
+TopBar.BackgroundColor3 = Color3.fromRGB(25, 28, 37)
+TopBar.BorderSizePixel = 0
+TopBar.Parent = MainFrame
+Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 14)
+
+local LogoBox = Instance.new("ImageLabel")
+LogoBox.Size = UDim2.fromOffset(36, 36)
+LogoBox.Position = UDim2.fromOffset(12, 8)
+LogoBox.BackgroundColor3 = Color3.fromRGB(36, 40, 52)
+LogoBox.BorderSizePixel = 0
+LogoBox.Image = (ADMIN_ICON_ID ~= "" and ADMIN_ICON_ID) or ICON_ID
+LogoBox.Parent = TopBar
+Instance.new("UICorner", LogoBox).CornerRadius = UDim.new(0, 18)
+
+local TopTitle = Instance.new("TextLabel")
+TopTitle.Size = UDim2.new(1, -120, 0, 22)
+TopTitle.Position = UDim2.fromOffset(56, 7)
+TopTitle.BackgroundTransparency = 1
+TopTitle.Text = "BLACKHAT HUB <font color=\"#FF4757\">• FIGHT CLUB</font>"
+TopTitle.RichText = true
+TopTitle.TextColor3 = Color3.new(1, 1, 1)
+TopTitle.TextSize = 15
+TopTitle.Font = Enum.Font.GothamBlack
+TopTitle.TextXAlignment = Enum.TextXAlignment.Left
+TopTitle.Parent = TopBar
+
+local TopSub = Instance.new("TextLabel")
+TopSub.Size = UDim2.new(1, -120, 0, 14)
+TopSub.Position = UDim2.fromOffset(56, 29)
+TopSub.BackgroundTransparency = 1
+TopSub.Text = "Clean Scrollable Menu • Combat & Movement"
+TopSub.TextColor3 = Color3.fromRGB(160, 168, 188)
+TopSub.TextSize = 10
+TopSub.Font = Enum.Font.GothamMedium
+TopSub.TextXAlignment = Enum.TextXAlignment.Left
+TopSub.Parent = TopBar
+
+local MinimizeBtn = Instance.new("TextButton")
+MinimizeBtn.Size = UDim2.fromOffset(42, 34)
+MinimizeBtn.Position = UDim2.new(1, -52, 0.5, -17)
+MinimizeBtn.BackgroundColor3 = Color3.fromRGB(45, 49, 64)
+MinimizeBtn.Text = "—"
+MinimizeBtn.TextColor3 = Color3.new(1, 1, 1)
+MinimizeBtn.TextSize = 15
+MinimizeBtn.Font = Enum.Font.GothamBold
+MinimizeBtn.Parent = TopBar
+Instance.new("UICorner", MinimizeBtn).CornerRadius = UDim.new(0, 8)
+
+-- Tekrar Açma Butonu
+local OpenBtn = Instance.new("ImageButton")
+OpenBtn.Size = UDim2.fromOffset(56, 56)
+OpenBtn.Position = UDim2.new(0, 14, 0.5, -28)
+OpenBtn.BackgroundColor3 = Color3.fromRGB(20, 22, 30)
+OpenBtn.BorderSizePixel = 0
+OpenBtn.Visible = false
+OpenBtn.ZIndex = 50
+OpenBtn.Parent = ScreenGui
+Instance.new("UICorner", OpenBtn).CornerRadius = UDim.new(0, 14)
+
+local OpenStroke = Instance.new("UIStroke")
+OpenStroke.Color = Color3.fromRGB(255, 65, 95)
+OpenStroke.Thickness = 1.6
+OpenStroke.Parent = OpenBtn
+
+local OpenImg = Instance.new("ImageLabel")
+OpenImg.Size = UDim2.fromOffset(38, 38)
+OpenImg.Position = UDim2.fromOffset(9, 9)
+OpenImg.BackgroundTransparency = 1
+OpenImg.Image = (ADMIN_ICON_ID ~= "" and ADMIN_ICON_ID) or ICON_ID
+OpenImg.Parent = OpenBtn
+
+MinimizeBtn.MouseButton1Click:Connect(function()
+	MainFrame.Visible = false
+	OpenBtn.Visible = true
+end)
+
+OpenBtn.MouseButton1Click:Connect(function()
+	MainFrame.Visible = true
+	OpenBtn.Visible = false
+end)
+
+-- Sürükleme Desteği
+do
+	local dragging, dragStart, startPos
+	TopBar.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			dragStart = input.Position
+			startPos = MainFrame.Position
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then dragging = false end
+			end)
+		end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local delta = input.Position - dragStart
+			MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end)
+end
+
+-- SOL MENÜ (Sekmeler Solda)
+local LeftSidebar = Instance.new("Frame")
+LeftSidebar.Name = "LeftSidebar"
+LeftSidebar.Size = UDim2.new(0, 126, 1, -64)
+LeftSidebar.Position = UDim2.fromOffset(10, 58)
+LeftSidebar.BackgroundColor3 = Color3.fromRGB(23, 26, 35)
+LeftSidebar.BorderSizePixel = 0
+LeftSidebar.Parent = MainFrame
+Instance.new("UICorner", LeftSidebar).CornerRadius = UDim.new(0, 10)
+
+local SideList = Instance.new("UIListLayout")
+SideList.Padding = UDim.new(0, 8)
+SideList.HorizontalAlignment = Enum.HorizontalAlignment.Center
+SideList.Parent = LeftSidebar
+
+local SidePad = Instance.new("UIPadding")
+SidePad.PaddingTop = UDim.new(0, 10)
+SidePad.PaddingLeft = UDim.new(0, 8)
+SidePad.PaddingRight = UDim.new(0, 8)
+SidePad.Parent = LeftSidebar
+
+-- SAĞ KAYDIRILABİLİR İÇERİK ALANI
+local ContentHolder = Instance.new("Frame")
+ContentHolder.Size = UDim2.new(1, -152, 1, -64)
+ContentHolder.Position = UDim2.fromOffset(142, 58)
+ContentHolder.BackgroundColor3 = Color3.fromRGB(21, 24, 32)
+ContentHolder.BorderSizePixel = 0
+ContentHolder.Parent = MainFrame
+Instance.new("UICorner", ContentHolder).CornerRadius = UDim.new(0, 10)
+
+local Tabs = {}
+local ScrollPages = {}
+
+local function SelectTab(name)
+	for pName, page in pairs(ScrollPages) do
+		page.Visible = (pName == name)
+	end
+	for tName, btn in pairs(Tabs) do
+		local isActive = (tName == name)
+		btn.BackgroundColor3 = isActive and Color3.fromRGB(235, 58, 86) or Color3.fromRGB(34, 38, 50)
+		btn.TextColor3 = isActive and Color3.new(1, 1, 1) or Color3.fromRGB(175, 182, 202)
+	end
+end
+
+local function CreateSideTab(name, label)
+	local tabBtn = Instance.new("TextButton")
+	tabBtn.Size = UDim2.new(1, 0, 0, 42)
+	tabBtn.BackgroundColor3 = Color3.fromRGB(34, 38, 50)
+	tabBtn.BorderSizePixel = 0
+	tabBtn.Text = label
+	tabBtn.TextColor3 = Color3.fromRGB(175, 182, 202)
+	tabBtn.TextSize = 13
+	tabBtn.Font = Enum.Font.GothamBold
+	tabBtn.Parent = LeftSidebar
+	Instance.new("UICorner", tabBtn).CornerRadius = UDim.new(0, 8)
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Name = name .. "Scroll"
+	scroll.Size = UDim2.new(1, -10, 1, -10)
+	scroll.Position = UDim2.fromOffset(5, 5)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 5
+	scroll.ScrollBarImageColor3 = Color3.fromRGB(255, 65, 95)
+	scroll.ScrollingDirection = Enum.ScrollingDirection.Y
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.CanvasSize = UDim2.fromOffset(0, 0)
+	scroll.Visible = false
+	scroll.Parent = ContentHolder
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 8)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = scroll
+
+	local pad = Instance.new("UIPadding")
+	pad.PaddingTop = UDim.new(0, 4)
+	pad.PaddingBottom = UDim.new(0, 12)
+	pad.PaddingLeft = UDim.new(0, 4)
+	pad.PaddingRight = UDim.new(0, 8)
+	pad.Parent = scroll
+
+	tabBtn.MouseButton1Click:Connect(function()
+		SelectTab(name)
+	end)
+
+	Tabs[name] = tabBtn
+	ScrollPages[name] = scroll
+	return scroll
+end
+
+local function MakeToggle(parent, text, initialOn, callback)
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 42)
+	btn.BackgroundColor3 = initialOn and Color3.fromRGB(30, 155, 95) or Color3.fromRGB(36, 40, 52)
+	btn.BorderSizePixel = 0
+	btn.Text = text .. ": " .. (initialOn and "ON" or "OFF")
+	btn.TextColor3 = Color3.new(1, 1, 1)
+	btn.TextSize = 13
+	btn.Font = Enum.Font.GothamBold
+	btn.Parent = parent
+	Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+
+	local state = initialOn
+	btn.MouseButton1Click:Connect(function()
+		state = not state
+		btn.Text = text .. ": " .. (state and "ON" or "OFF")
+		btn.BackgroundColor3 = state and Color3.fromRGB(30, 155, 95) or Color3.fromRGB(36, 40, 52)
+		callback(state)
+	end)
+	return btn
+end
+
+local function MakeStep(parent, label, getVal, step, minV, maxV, onChange)
+	local box = Instance.new("Frame")
+	box.Size = UDim2.new(1, 0, 0, 42)
+	box.BackgroundColor3 = Color3.fromRGB(30, 34, 45)
+	box.BorderSizePixel = 0
+	box.Parent = parent
+	Instance.new("UICorner", box).CornerRadius = UDim.new(0, 8)
+
+	local txt = Instance.new("TextLabel")
+	txt.Size = UDim2.new(1, -96, 1, 0)
+	txt.Position = UDim2.fromOffset(12, 0)
+	txt.BackgroundTransparency = 1
+	txt.Text = label .. ": " .. tostring(getVal())
+	txt.TextColor3 = Color3.fromRGB(235, 238, 246)
+	txt.TextSize = 12
+	txt.Font = Enum.Font.GothamBold
+	txt.TextXAlignment = Enum.TextXAlignment.Left
+	txt.Parent = box
+
+	local plus = Instance.new("TextButton")
+	plus.Size = UDim2.fromOffset(38, 28)
+	plus.Position = UDim2.new(1, -86, 0.5, -14)
+	plus.BackgroundColor3 = Color3.fromRGB(45, 150, 95)
+	plus.Text = "+"
+	plus.TextColor3 = Color3.new(1, 1, 1)
+	plus.TextSize = 15
+	plus.Font = Enum.Font.GothamBlack
+	plus.Parent = box
+	Instance.new("UICorner", plus).CornerRadius = UDim.new(0, 6)
+
+	local minus = Instance.new("TextButton")
+	minus.Size = UDim2.fromOffset(38, 28)
+	minus.Position = UDim2.new(1, -44, 0.5, -14)
+	minus.BackgroundColor3 = Color3.fromRGB(175, 50, 65)
+	minus.Text = "-"
+	minus.TextColor3 = Color3.new(1, 1, 1)
+	minus.TextSize = 15
+	minus.Font = Enum.Font.GothamBlack
+	minus.Parent = box
+	Instance.new("UICorner", minus).CornerRadius = UDim.new(0, 6)
+
+	plus.MouseButton1Click:Connect(function()
+		local nv = math.clamp(getVal() + step, minV, maxV)
+		onChange(nv)
+		txt.Text = label .. ": " .. tostring(nv)
+	end)
+
+	minus.MouseButton1Click:Connect(function()
+		local nv = math.clamp(getVal() - step, minV, maxV)
+		onChange(nv)
+		txt.Text = label .. ": " .. tostring(nv)
+	end)
+end
+
+-- Sekmeleri Oluştur (Sol Tarafta)
+local CombatTab = CreateSideTab("Combat", "Combat")
+local MoveTab = CreateSideTab("Move", "Move")
+local VisualTab = CreateSideTab("Visual", "Visual")
+
+-- COMBAT ÖZELLİKLERİ
+MakeToggle(CombatTab, "Auto Punch / Kick", Config.AutoFight, function(v)
+	Config.AutoFight = v
+end)
+
+MakeToggle(CombatTab, "Auto Chase Enemy", Config.AutoChase, function(v)
+	Config.AutoChase = v
+end)
+
+MakeToggle(CombatTab, "Auto Block", Config.AutoBlock, function(v)
+	Config.AutoBlock = v
+end)
+
+-- MOVE ÖZELLİKLERİ
+MakeToggle(MoveTab, "Speed Hack", Config.SpeedHack, function(v)
+	Config.SpeedHack = v
+	local _, _, hum = GetChar()
+	if hum then hum.WalkSpeed = v and Config.WalkSpeed or 16 end
+end)
+
+MakeStep(MoveTab, "Walk Speed", function() return Config.WalkSpeed end, 6, 16, 140, function(v)
+	Config.WalkSpeed = v
+end)
+
+MakeToggle(MoveTab, "Fly", Config.Fly, function(v)
+	Config.Fly = v
+	if v then StartFly() else StopFly() end
+end)
+
+MakeStep(MoveTab, "Fly Speed", function() return Config.FlySpeed end, 10, 20, 200, function(v)
+	Config.FlySpeed = v
+end)
+
+MakeToggle(MoveTab, "Noclip", Config.Noclip, function(v)
+	Config.Noclip = v
+end)
+
+-- VISUAL ÖZELLİKLERİ
+MakeToggle(VisualTab, "Player ESP", Config.PlayerESP, function(v)
+	Config.PlayerESP = v
+	if v then UpdateESP() else ClearESP() end
+end)
+
+MakeToggle(VisualTab, "Anti AFK", Config.AntiAFK, function(v)
+	Config.AntiAFK = v
+end)
+
+SelectTab("Combat")
+print("[Blackhat Hub] Fight Club Left-Sidebar Scroll UI Loaded!")
