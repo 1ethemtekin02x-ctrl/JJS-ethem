@@ -1,28 +1,36 @@
 --========================================================
 -- BLACKHAT HUB | FIGHT CLUB (LEFT SIDEBAR SCROLL UI)
 -- Author: blackhat
--- Part 1 (Fight Club Combat, Movement & Visuals)
+-- Part 1 (Mobile Punch Fix, Auto Combat & Image Preload)
 --========================================================
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local VirtualUser = game:GetService("VirtualUser")
+local ContentProvider = game:GetService("ContentProvider")
 local Workspace = game:GetService("Workspace")
+
+local VirtualInputManager = nil
+pcall(function()
+	VirtualInputManager = game:GetService("VirtualInputManager")
+end)
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 local Camera = Workspace.CurrentCamera
 
-local ICON_ID = "rbxthumb://type=Asset&id=139474306115384&w=150&h=150"
-local ADMIN_ICON_ID = "rbxassetid://139474306115384"
+local MASK_ASSET_ID = "139474306115384"
+local ICON_ID = "rbxassetid://" .. MASK_ASSET_ID
+local ADMIN_ICON_ID = "rbxassetid://" .. MASK_ASSET_ID
 
 --========================================================
 -- FIGHT CLUB AYARLARI
 --========================================================
 
 local Config = {
-	AutoFight = false,
+	AutoPunch = false,
+	AutoComboKick = false,
 	AutoChase = false,
 	AutoBlock = false,
 	SpeedHack = false,
@@ -38,8 +46,10 @@ local State = {
 	BodyGyro = nil,
 	BodyVelocity = nil,
 	ESPObjects = {},
-	LastHit = 0,
-	LastBlock = 0
+	LastPunch = 0,
+	LastKick = 0,
+	LastBlock = 0,
+	PunchToggle = false
 }
 
 --========================================================
@@ -54,12 +64,29 @@ local function GetChar()
 	return char, hrp, hum
 end
 
+local function ApplyImage(imgObject, assetIdStr)
+	if not imgObject then return end
+	local cleanId = tostring(assetIdStr or MASK_ASSET_ID):gsub("%D", "")
+	if cleanId == "" then cleanId = MASK_ASSET_ID end
+	local primary = "rbxassetid://" .. cleanId
+	imgObject.Image = primary
+	task.spawn(function()
+		pcall(function()
+			ContentProvider:PreloadAsync({imgObject})
+		end)
+		task.wait(0.8)
+		if imgObject.IsLoaded == false then
+			imgObject.Image = "rbxthumb://type=Asset&id=" .. cleanId .. "&w=420&h=420"
+		end
+	end)
+end
+
 local function GetNearestEnemy(maxDist)
 	local char, hrp = GetChar()
 	if not char or not hrp then return nil, nil, nil, math.huge end
 
 	local bestPlr, bestChar, bestHRP = nil, nil, nil
-	local bestDist = maxDist or 120
+	local bestDist = maxDist or 140
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= LocalPlayer and plr.Character then
@@ -81,32 +108,56 @@ local function GetNearestEnemy(maxDist)
 	return bestPlr, bestChar, bestHRP, bestDist
 end
 
-local function TriggerGuiAction(keywords)
+local function FireGuiByKeywords(keywords)
+	local hitAny = false
 	for _, gui in ipairs(PlayerGui:GetDescendants()) do
-		if gui:IsA("TextButton") or gui:IsA("ImageButton") then
-			if gui.Visible and gui.AbsoluteSize.Magnitude > 5 then
+		if gui:IsA("GuiButton") and gui.Visible and gui.AbsoluteSize.Magnitude > 4 then
+			if not gui:IsDescendantOf(PlayerGui:FindFirstChild("BLACKHAT_FC_UI") or Instance.new("Folder")) then
 				local txt = string.lower(gui.Name .. " " .. (gui:IsA("TextButton") and gui.Text or ""))
 				for _, kw in ipairs(keywords) do
 					if string.find(txt, kw, 1, true) then
 						pcall(function()
 							if firesignal then
+								firesignal(gui.MouseButton1Down)
 								firesignal(gui.MouseButton1Click)
 								firesignal(gui.Activated)
+								firesignal(gui.MouseButton1Up)
 							end
 						end)
-						return true
+						hitAny = true
 					end
 				end
 			end
 		end
 	end
-	return false
+	return hitAny
 end
 
-local function DoAttack()
+local function SendMobileTap(x, y)
+	local vp = Camera.ViewportSize
+	local px = x or (vp.X * 0.75)
+	local py = y or (vp.Y * 0.65)
+
+	if VirtualInputManager then
+		pcall(function()
+			VirtualInputManager:SendMouseButtonEvent(px, py, 0, true, game, 1)
+			task.wait(0.02)
+			VirtualInputManager:SendMouseButtonEvent(px, py, 0, false, game, 1)
+		end)
+	end
+
+	pcall(function()
+		VirtualUser:CaptureController()
+		VirtualUser:Button1Down(Vector2.new(px, py), Camera.CFrame)
+		task.wait(0.02)
+		VirtualUser:Button1Up(Vector2.new(px, py), Camera.CFrame)
+	end)
+end
+
+local function DoPunch()
 	local now = os.clock()
-	if now - State.LastHit < 0.14 then return end
-	State.LastHit = now
+	if now - State.LastPunch < 0.11 then return end
+	State.LastPunch = now
 
 	local char = LocalPlayer.Character
 	if char then
@@ -117,19 +168,29 @@ local function DoAttack()
 		end
 	end
 
-	TriggerGuiAction({"punch", "kick", "high", "low", "hit", "attack", "fist"})
+	FireGuiByKeywords({"punch", "fist", "jab", "cross", "hook", "hit", "attack", "strike"})
+	SendMobileTap(Camera.ViewportSize.X * 0.72, Camera.ViewportSize.Y * 0.62)
+end
 
-	pcall(function()
-		VirtualUser:CaptureController()
-		VirtualUser:ClickButton1(Vector2.new(Camera.ViewportSize.X * 0.72, Camera.ViewportSize.Y * 0.55))
-	end)
+local function DoKickCombo()
+	local now = os.clock()
+	if now - State.LastKick < 0.16 then return end
+	State.LastKick = now
+
+	State.PunchToggle = not State.PunchToggle
+	if State.PunchToggle then
+		FireGuiByKeywords({"high", "kick", "roundhouse", "uppercut", "heavy", "special", "combo"})
+	else
+		FireGuiByKeywords({"low", "kick", "leg", "sweep", "punch", "hit"})
+	end
+	DoPunch()
 end
 
 local function DoBlock()
 	local now = os.clock()
-	if now - State.LastBlock < 0.25 then return end
+	if now - State.LastBlock < 0.22 then return end
 	State.LastBlock = now
-	TriggerGuiAction({"block", "guard", "parry", "defend"})
+	FireGuiByKeywords({"block", "guard", "parry", "defend"})
 end
 
 --========================================================
@@ -323,32 +384,37 @@ local function UpdateESP()
 end
 
 --========================================================
--- FIGHT CLUB COMBAT LOOP
+-- FIGHT CLUB AUTO LOOPS
 --========================================================
 
 task.spawn(function()
-	while task.wait(0.10) do
+	while task.wait(0.09) do
 		local char, hrp = GetChar()
-		if char and hrp and (Config.AutoFight or Config.AutoChase or Config.AutoBlock) then
-			local _, _, eHRP, dist = GetNearestEnemy(Config.AutoChase and 150 or 16)
-			if eHRP then
-				if Config.AutoChase and dist > 3.2 then
-					local behindPos = eHRP.Position - (eHRP.CFrame.LookVector * 3.4)
+		if char and hrp then
+			local _, _, eHRP, dist = GetNearestEnemy(Config.AutoChase and 160 or 18)
+
+			if Config.AutoChase and eHRP and dist > 3.0 then
+				local behindPos = eHRP.Position - (eHRP.CFrame.LookVector * 3.2)
+				pcall(function()
+					char:PivotTo(CFrame.new(behindPos, eHRP.Position))
+					hrp.AssemblyLinearVelocity = Vector3.zero
+				end)
+			end
+
+			if Config.AutoBlock and eHRP and dist < 11 then
+				DoBlock()
+			end
+
+			if Config.AutoPunch or Config.AutoComboKick then
+				if eHRP and dist < 14 then
 					pcall(function()
-						char:PivotTo(CFrame.new(behindPos, eHRP.Position))
-						hrp.AssemblyLinearVelocity = Vector3.zero
+						Camera.CFrame = CFrame.new(Camera.CFrame.Position, eHRP.Position + Vector3.new(0, 1.1, 0))
 					end)
 				end
-
-				if Config.AutoBlock and dist < 10 then
-					DoBlock()
-				end
-
-				if Config.AutoFight and dist < 11 then
-					pcall(function()
-						Camera.CFrame = CFrame.new(Camera.CFrame.Position, eHRP.Position + Vector3.new(0, 1, 0))
-					end)
-					DoAttack()
+				if Config.AutoComboKick then
+					DoKickCombo()
+				elseif Config.AutoPunch then
+					DoPunch()
 				end
 			end
 		end
@@ -382,7 +448,7 @@ end)
 --========================================================
 -- BLACKHAT HUB | FIGHT CLUB (LEFT SIDEBAR SCROLL UI)
 -- Author: blackhat
--- Part 2 (Large Scrollable Menu, Tabs on Left)
+-- Part 2 (Updated Autos & Image Fix)
 --========================================================
 
 local old = PlayerGui:FindFirstChild("BLACKHAT_FC_UI")
@@ -421,17 +487,18 @@ TopBar.Parent = MainFrame
 Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 14)
 
 local LogoBox = Instance.new("ImageLabel")
-LogoBox.Size = UDim2.fromOffset(36, 36)
-LogoBox.Position = UDim2.fromOffset(12, 8)
+LogoBox.Size = UDim2.fromOffset(38, 38)
+LogoBox.Position = UDim2.fromOffset(11, 7)
 LogoBox.BackgroundColor3 = Color3.fromRGB(36, 40, 52)
 LogoBox.BorderSizePixel = 0
-LogoBox.Image = (ADMIN_ICON_ID ~= "" and ADMIN_ICON_ID) or ICON_ID
+LogoBox.ScaleType = Enum.ScaleType.Crop
 LogoBox.Parent = TopBar
-Instance.new("UICorner", LogoBox).CornerRadius = UDim.new(0, 18)
+Instance.new("UICorner", LogoBox).CornerRadius = UDim.new(0, 19)
+ApplyImage(LogoBox, MASK_ASSET_ID)
 
 local TopTitle = Instance.new("TextLabel")
 TopTitle.Size = UDim2.new(1, -120, 0, 22)
-TopTitle.Position = UDim2.fromOffset(56, 7)
+TopTitle.Position = UDim2.fromOffset(57, 7)
 TopTitle.BackgroundTransparency = 1
 TopTitle.Text = "BLACKHAT HUB <font color=\"#FF4757\">• FIGHT CLUB</font>"
 TopTitle.RichText = true
@@ -443,9 +510,9 @@ TopTitle.Parent = TopBar
 
 local TopSub = Instance.new("TextLabel")
 TopSub.Size = UDim2.new(1, -120, 0, 14)
-TopSub.Position = UDim2.fromOffset(56, 29)
+TopSub.Position = UDim2.fromOffset(57, 29)
 TopSub.BackgroundTransparency = 1
-TopSub.Text = "Clean Scrollable Menu • Combat & Movement"
+TopSub.Text = "Auto Combat • Mobile Punch & Movement"
 TopSub.TextColor3 = Color3.fromRGB(160, 168, 188)
 TopSub.TextSize = 10
 TopSub.Font = Enum.Font.GothamMedium
@@ -480,11 +547,12 @@ OpenStroke.Thickness = 1.6
 OpenStroke.Parent = OpenBtn
 
 local OpenImg = Instance.new("ImageLabel")
-OpenImg.Size = UDim2.fromOffset(38, 38)
-OpenImg.Position = UDim2.fromOffset(9, 9)
+OpenImg.Size = UDim2.fromOffset(40, 40)
+OpenImg.Position = UDim2.fromOffset(8, 8)
 OpenImg.BackgroundTransparency = 1
-OpenImg.Image = (ADMIN_ICON_ID ~= "" and ADMIN_ICON_ID) or ICON_ID
+OpenImg.ScaleType = Enum.ScaleType.Crop
 OpenImg.Parent = OpenBtn
+ApplyImage(OpenImg, MASK_ASSET_ID)
 
 MinimizeBtn.MouseButton1Click:Connect(function()
 	MainFrame.Visible = false
@@ -689,12 +757,16 @@ local CombatTab = CreateSideTab("Combat", "Combat")
 local MoveTab = CreateSideTab("Move", "Move")
 local VisualTab = CreateSideTab("Visual", "Visual")
 
--- COMBAT ÖZELLİKLERİ
-MakeToggle(CombatTab, "Auto Punch / Kick", Config.AutoFight, function(v)
-	Config.AutoFight = v
+-- COMBAT AUTO ÖZELLİKLERİ
+MakeToggle(CombatTab, "Auto Punch", Config.AutoPunch, function(v)
+	Config.AutoPunch = v
 end)
 
-MakeToggle(CombatTab, "Auto Chase Enemy", Config.AutoChase, function(v)
+MakeToggle(CombatTab, "Auto Combo / Kick", Config.AutoComboKick, function(v)
+	Config.AutoComboKick = v
+end)
+
+MakeToggle(CombatTab, "Auto Chase", Config.AutoChase, function(v)
 	Config.AutoChase = v
 end)
 
@@ -737,4 +809,4 @@ MakeToggle(VisualTab, "Anti AFK", Config.AntiAFK, function(v)
 end)
 
 SelectTab("Combat")
-print("[Blackhat Hub] Fight Club Left-Sidebar Scroll UI Loaded!")
+print("[Blackhat Hub] Fight Club Updated Autos & Image Loader Ready!")
